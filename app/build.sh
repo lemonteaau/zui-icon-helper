@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Builds and signs the APK with only the Android SDK command-line tools (no Gradle).
 #   ANDROID_HOME                          Android SDK (default ~/Library/Android/sdk)
+#   ANDROID_PLATFORM                      e.g. android-36 (default: newest installed)
 #   JAVA_HOME                             JDK 17+ (default: whatever is on PATH)
 #   KEYSTORE / KEYSTORE_PASS / KEY_ALIAS  signing key; without them a throwaway debug key is used
 set -euo pipefail
 cd "$(dirname "$0")"
 sdk=${ANDROID_HOME:-$HOME/Library/Android/sdk}
 bt=$(ls -d "$sdk"/build-tools/* | sort -V | tail -1)
-platform=$(ls -d "$sdk"/platforms/android-* | sort -V | tail -1)/android.jar
+platform=${ANDROID_PLATFORM:+$sdk/platforms/$ANDROID_PLATFORM}
+platform=${platform:-$(ls -d "$sdk"/platforms/android-* | sort -V | tail -1)}/android.jar
 bin=${JAVA_HOME:+$JAVA_HOME/bin/}
 rm -rf build && mkdir -p build/classes build/dex
 "${bin}javac" -source 8 -target 8 -nowarn -encoding UTF-8 -classpath "$platform" -d build/classes src/io/github/lemonteaau/zuiiconhelper/*.java
