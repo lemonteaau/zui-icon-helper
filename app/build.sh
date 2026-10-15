@@ -21,6 +21,7 @@ if [[ -z "${KEYSTORE:-}" ]]; then
   KEYSTORE=build/debug.jks KEYSTORE_PASS=android KEY_ALIAS=debug
   "${bin}keytool" -genkeypair -keystore "$KEYSTORE" -storepass android -keypass android -alias debug -keyalg RSA -validity 3650 -dname 'CN=Debug' >/dev/null 2>&1
 fi
-"$bt/apksigner" sign --ks "$KEYSTORE" --ks-pass "pass:$KEYSTORE_PASS" --ks-key-alias "${KEY_ALIAS:-release}" --out build/zui-icon-helper.apk build/aligned.apk
+export KEYSTORE_PASS
+"$bt/apksigner" sign --ks "$KEYSTORE" --ks-pass env:KEYSTORE_PASS --ks-key-alias "${KEY_ALIAS:-release}" --out build/zui-icon-helper.apk build/aligned.apk
 "$bt/apksigner" verify build/zui-icon-helper.apk
 echo "Built app/build/zui-icon-helper.apk"

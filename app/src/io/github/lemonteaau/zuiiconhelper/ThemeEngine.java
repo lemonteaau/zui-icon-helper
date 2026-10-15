@@ -187,6 +187,9 @@ final class ThemeEngine extends ContextWrapper {
     }
 
     /** Builds the zip for a default pack plus per-app overrides. */
+    File compose(String pack, JSONObject overrides, IconRepository repo,int scale) throws Exception {
+        IconScale.valid(scale);return IconScale.archive(compose(pack,overrides,repo),new File(getFilesDir(),"scaled-next.zip"),scale,forcedAliases());
+    }
     File compose(String pack, JSONObject overrides, IconRepository repo) throws Exception {
         File base = preparedAsset(pack);
         if (overrides.length() == 0) return base;

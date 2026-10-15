@@ -20,10 +20,11 @@ public class MainActivity extends Activity {
     final android.util.LruCache<String,Bitmap> cache=new android.util.LruCache<String,Bitmap>(12*1024*1024) { protected int sizeOf(String k,Bitmap b) {return b.getByteCount();} };
     ThemeEngine engine; IconRepository repo; android.content.SharedPreferences prefs;
     JSONObject overrides=new JSONObject(), appliedOverrides=new JSONObject(); String base="original",appliedBase="original",query="";
+    int iconScale=100,appliedScale=100;
     static final int PICK_ICON=601;
     android.net.Uri pendingResult;
-    boolean busy=true, binding; TextView status, subtitle, appCount, packDetail; Button apply; TextView defaults; AppAdapter adapter; ListView list; LinearLayout root;
-    List<IconRepository.App> filtered=new ArrayList<>();
+    boolean busy=true, binding; TextView status, subtitle, appCount, packDetail, scaleDetail; Button apply; TextView defaults; AppAdapter adapter; ListView list; LinearLayout root;
+    List<IconRepository.App> filtered=new ArrayList<>();final List<Object> rows=new ArrayList<>();static final Object FOOTER=new Object();
     int dp(float n){return (int)(getResources().getDisplayMetrics().density*n+.5f);}
     TextView text(String s,int size,int color){return SmartisanStyle.text(this,s,size,color);}
     GradientDrawable shape(int color,int stroke){return SmartisanStyle.surface(this,color,10,stroke);}
@@ -46,6 +47,7 @@ public class MainActivity extends Activity {
                     base=prefs.getString("draftBase",appliedBase);if(!repo.hasPack(base))base="original";overrides=new JSONObject(prefs.getString("draftOverrides",appliedOverrides.toString()));
                     // Remove stale native overrides for apps uninstalled since the previous session.
                     List<String> removed=new ArrayList<>();Iterator<String> it=overrides.keys();while(it.hasNext()){String p=it.next();String c=overrides.optString(p);if(("native".equals(c)&&repo.findApp(p)==null)||(!"native".equals(c)&&!repo.icons.containsKey(c)))removed.add(p);}for(String p:removed)overrides.remove(p);
+                    appliedScale=IconScale.valid(prefs.getInt("appliedScale",100));iconScale=IconScale.valid(prefs.getInt("draftScale",appliedScale));
                     busy=false;binding=true;updateDefault();binding=false;filter();updateState();
                     if("unknown".equals(detected))status.setText("当前桌面图标不是由助手设置的；选好后点「应用选择」即可接管。");
                     if(repo.packs.isEmpty())status.setText("还没有导入图标包：点上面的「图标包」开始。");
@@ -58,20 +60,21 @@ public class MainActivity extends Activity {
         root=column();root.setBackgroundColor(BG);
         FrameLayout bar=new FrameLayout(this);bar.setBackgroundColor(Color.WHITE);TextView title=text("图标助手",17,SmartisanStyle.TITLE);title.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));title.setGravity(Gravity.CENTER);bar.addView(title,new FrameLayout.LayoutParams(-1,dp(48)));
         FrameLayout.LayoutParams rp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.RIGHT|Gravity.CENTER_VERTICAL);rp.rightMargin=dp(6);bar.addView(barAction("setting",20,"设置与帮助",()->menu()),rp);root.addView(bar);root.addView(SmartisanStyle.divider(this,SmartisanStyle.BAR_LINE));
-        LinearLayout content=column();content.setPadding(dp(16),dp(18),dp(16),dp(12));content.addView(SmartisanStyle.caption(this,"默认方案"));
+        LinearLayout content=column();content.setPadding(dp(16),0,dp(16),0);LinearLayout header=column();header.setPadding(0,dp(18),0,0);header.addView(SmartisanStyle.caption(this,"默认方案"));
         LinearLayout group=column();SmartisanStyle.card(group);
         LinearLayout defaultRow=listRow("setting","默认图标包","选择默认图标包",()->chooseDefault());defaults=(TextView)defaultRow.getTag();group.addView(defaultRow,new LinearLayout.LayoutParams(-1,dp(56)));
         View line=SmartisanStyle.divider(this,SmartisanStyle.DIVIDER);((LinearLayout.LayoutParams)line.getLayoutParams()).leftMargin=dp(50);group.addView(line);
         LinearLayout packRow=listRow("search","图标包","导入或管理图标包",()->managePacks());packDetail=(TextView)packRow.getTag();group.addView(packRow,new LinearLayout.LayoutParams(-1,dp(56)));
-        content.addView(group,new LinearLayout.LayoutParams(-1,-2));
-        subtitle=text("新安装的应用自动用默认包；单独选过的应用不受影响。",12,MUTED);subtitle.setPadding(dp(16),dp(8),dp(8),dp(18));content.addView(subtitle);
-        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("搜索应用名称或包名");content.addView(searchField(search),new LinearLayout.LayoutParams(-1,dp(38)));
+        View line2=SmartisanStyle.divider(this,SmartisanStyle.DIVIDER);((LinearLayout.LayoutParams)line2.getLayoutParams()).leftMargin=dp(50);group.addView(line2);
+        LinearLayout scaleRow=listRow("resize","图标大小","统一调整替换后图标的大小",()->chooseScale());scaleDetail=(TextView)scaleRow.getTag();group.addView(scaleRow,new LinearLayout.LayoutParams(-1,dp(56)));
+        header.addView(group,new LinearLayout.LayoutParams(-1,-2));
+        subtitle=text("点右边的图标换上，点左边的用回原生；点进一行可以挑别的图标或用自己的图片。",12,MUTED);subtitle.setLineSpacing(dp(3),1);subtitle.setPadding(dp(16),dp(8),dp(8),dp(18));header.addView(subtitle);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("搜索应用名称或包名");header.addView(searchField(search),new LinearLayout.LayoutParams(-1,dp(38)));
         search.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){query=s.toString().toLowerCase(Locale.ROOT);if(repo!=null)filter();}public void afterTextChanged(Editable e){}});
-        LinearLayout sectionRow=new LinearLayout(this);sectionRow.setPadding(0,dp(20),dp(16),0);sectionRow.addView(SmartisanStyle.caption(this,"应用图标"),new LinearLayout.LayoutParams(0,-2,1));appCount=text("",12,MUTED);sectionRow.addView(appCount);content.addView(sectionRow);
-        FrameLayout listCard=new FrameLayout(this);SmartisanStyle.card(listCard);list=new ListView(this);list.setDivider(new android.graphics.drawable.InsetDrawable(new android.graphics.drawable.ColorDrawable(SmartisanStyle.DIVIDER),dp(16),0,0,0));list.setDividerHeight(Math.max(1,dp(.8f)));list.setSelector(android.R.color.transparent);list.setVerticalScrollBarEnabled(false);adapter=new AppAdapter();list.setAdapter(adapter);listCard.addView(list,new FrameLayout.LayoutParams(-1,-1));content.addView(listCard,new LinearLayout.LayoutParams(-1,0,1));
+        list=new ListView(this);list.setDivider(null);list.setSelector(android.R.color.transparent);list.setVerticalScrollBarEnabled(false);list.setClipToPadding(false);list.setPadding(0,0,0,dp(16));list.setItemsCanFocus(true);list.addHeaderView(header,null,false);adapter=new AppAdapter();list.setAdapter(adapter);content.addView(list,new LinearLayout.LayoutParams(-1,0,1));
         root.addView(new SmartisanStyle.Centered(this,content,-1),new LinearLayout.LayoutParams(-1,0,1));root.addView(SmartisanStyle.divider(this,SmartisanStyle.BAR_LINE));
         LinearLayout bottom=column();bottom.setPadding(dp(16),dp(10),dp(16),dp(14));status=text("正在整理图标预览…",12,MUTED);status.setGravity(Gravity.CENTER);status.setPadding(0,0,0,dp(10));bottom.addView(status);
-        LinearLayout footer=new LinearLayout(this);footer.setBaselineAligned(false);Button undo=button("撤销修改");undo.setOnClickListener(v->{if(busy)return;base=appliedBase;overrides=cloneJson(appliedOverrides);persistDraft();updateDefault();adapter.notifyDataSetChanged();updateState();});footer.addView(undo,new LinearLayout.LayoutParams(0,dp(48),1));
+        LinearLayout footer=new LinearLayout(this);footer.setBaselineAligned(false);Button undo=button("撤销修改");undo.setOnClickListener(v->{if(busy)return;base=appliedBase;iconScale=appliedScale;overrides=cloneJson(appliedOverrides);persistDraft();updateDefault();refresh();updateState();});footer.addView(undo,new LinearLayout.LayoutParams(0,dp(48),1));
         apply=button("应用选择");SmartisanStyle.type(apply,16,Color.WHITE,true);apply.setBackground(SmartisanStyle.button(this,true));apply.setStateListAnimator(null);apply.setOnClickListener(v->applySelection());LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(0,dp(48),2);ap.leftMargin=dp(12);footer.addView(apply,ap);bottom.addView(footer);
         FrameLayout bottomBar=new SmartisanStyle.Centered(this,bottom,-2);bottomBar.setBackgroundColor(Color.WHITE);root.addView(bottomBar,new LinearLayout.LayoutParams(-1,-2));
         setContentView(root);apply.setEnabled(false);
@@ -115,79 +118,112 @@ public class MainActivity extends Activity {
             final String failure=error;runOnUiThread(()->{dialog.dismiss();busy=false;if(failure==null){if(repo.packs.isEmpty())prefs.edit().putString("draftBase",PackImporter.packId(pkg)).commit();recreate();}else{updateState();new PanelDialog.Builder(this).setTitle("导入失败").setMessage(failure==null?"未知错误":failure).setPositiveButton("知道了",null).show();}});
         },"import-pack").start();
     }
-    void updateDefault(){defaults.setText(repo==null?"正在读取":repo.label(base));if(packDetail!=null)packDetail.setText(repo==null?"正在读取":repo.packs.isEmpty()?"去导入":repo.packs.size()+" 个");}
-    void chooseDefault(){if(busy)return;LinearLayout choices=column();PanelDialog dialog=new PanelDialog.Builder(this).setTitle("默认图标包").setView(choices).setNegativeButton("取消",null).create();for(String pack:repo.bases()){LinearLayout row=new LinearLayout(this);row.setPadding(dp(20),0,dp(20),0);row.setGravity(Gravity.CENTER_VERTICAL);row.addView(text(repo.label(pack),16,INK),new LinearLayout.LayoutParams(0,-2,1));row.addView(SmartisanStyle.icon(this,base.equals(pack)?"selected":"unselected",22));row.setContentDescription(repo.label(pack)+(base.equals(pack)?" · 已选":""));row.setOnClickListener(v->{base=pack;persistDraft();updateDefault();adapter.notifyDataSetChanged();updateState();dialog.dismiss();});choices.addView(row,new LinearLayout.LayoutParams(-1,dp(54)));choices.addView(SmartisanStyle.divider(this,SmartisanStyle.DIVIDER));}dialog.show();}
+    void updateDefault(){if(scaleDetail!=null)scaleDetail.setText(iconScale+"%");defaults.setText(repo==null?"正在读取":repo.label(base));if(packDetail!=null)packDetail.setText(repo==null?"正在读取":repo.packs.isEmpty()?"去导入":repo.packs.size()+" 个");}
+    void chooseDefault(){if(busy)return;LinearLayout choices=column();PanelDialog dialog=new PanelDialog.Builder(this).setTitle("默认图标包").setView(choices).setNegativeButton("取消",null).create();for(String pack:repo.bases()){LinearLayout row=new LinearLayout(this);row.setPadding(dp(20),0,dp(20),0);row.setGravity(Gravity.CENTER_VERTICAL);row.addView(text(repo.label(pack),16,INK),new LinearLayout.LayoutParams(0,-2,1));row.addView(SmartisanStyle.icon(this,base.equals(pack)?"selected":"unselected",22));row.setContentDescription(repo.label(pack)+(base.equals(pack)?" · 已选":""));row.setOnClickListener(v->{base=pack;persistDraft();updateDefault();refresh();updateState();dialog.dismiss();});choices.addView(row,new LinearLayout.LayoutParams(-1,dp(54)));choices.addView(SmartisanStyle.divider(this,SmartisanStyle.DIVIDER));}dialog.show();}
     void menu(){if(busy)return;new PanelDialog.Builder(this).setTitle("设置").setItems(new String[]{"全部应用重新跟随默认包","恢复系统原始图标","使用说明","关于与开源许可"},(d,n)->{
-        if(n==2){new PanelDialog.Builder(this).setTitle("使用说明").setMessage("1. 先导入图标包：点「图标包」，选平板上已经安装的图标包 App。\n\n2. 在「默认图标包」里选一个，所有它收录的应用都会换成这一套。以后新装的应用也会自动匹配。\n\n3. 想给某个应用换别的样子：在它那一行点选一个预览（浅蓝底加蓝色小勾就是选中），或者点「更多图标」从所有图标包里挑，也可以导入自己的图片。\n\n4. 点底部的「应用选择」，桌面图标才会真正改变。\n\n随时可以在这里选「恢复系统原始图标」回到出厂的样子。壁纸和桌面布局都不会被改动。\n\n如果在系统设置里换了主题，请回到助手重新点一次「应用选择」。").setPositiveButton("知道了",null).show();return;}
+        if(n==2){new PanelDialog.Builder(this).setTitle("使用说明").setMessage("1. 先导入图标包：点「图标包」，选平板上已经安装的图标包 App。\n\n2. 在「默认图标包」里选一个，所有它收录的应用都会换成这一套。以后新装的应用也会自动匹配。\n\n3. 每个应用一行：左边是原生图标，右边是替换图标，点哪个就用哪个（红色小勾就是选中）。点进那一行，可以从所有图标包里挑别的，也可以导入自己的图片。\n\n4. 点底部的「应用选择」，桌面图标才会真正改变。\n\n随时可以在这里选「恢复系统原始图标」回到出厂的样子。壁纸和桌面布局都不会被改动。\n\n如果在系统设置里换了主题，请回到助手重新点一次「应用选择」。").setPositiveButton("知道了",null).show();return;}
         if(n==3){new PanelDialog.Builder(this).setTitle("关于").setMessage("ZUI 图标助手 "+versionName()+"\n给联想 ZUI 平板的原厂桌面换图标，不需要 root。\n\n开源地址：github.com/lemonteaau/zui-icon-helper\n\n界面风格参考 Smartisan OS UI Kit (Unofficial)，作者 Paix Chan，CC BY 4.0。\n\n助手本身不带任何第三方图标。导入的图标包只在你的平板上转换使用，版权归原作者所有。").setPositiveButton("知道了",null).show();return;}
-        new PanelDialog.Builder(this).setTitle(n==0?"清除所有单独选择？":"恢复系统原始图标？").setMessage(n==0?"所有应用将重新跟随默认包，点「应用选择」后生效。":"将清除单独选择，并恢复主题自带的原始图标。壁纸和布局不变。").setNegativeButton("取消",null).setPositiveButton(n==0?"清除选择":"恢复",(x,w)->{overrides=new JSONObject();if(n==1)base="original";persistDraft();binding=true;updateDefault();binding=false;adapter.notifyDataSetChanged();updateState();if(n==1)applySelection();}).show();
+        new PanelDialog.Builder(this).setTitle(n==0?"清除所有单独选择？":"恢复系统原始图标？").setMessage(n==0?"所有应用将重新跟随默认包，点「应用选择」后生效。":"将清除单独选择，并恢复主题自带的原始图标。壁纸和布局不变。").setNegativeButton("取消",null).setPositiveButton(n==0?"清除选择":"恢复",(x,w)->{overrides=new JSONObject();if(n==1){base="original";iconScale=100;}persistDraft();binding=true;updateDefault();binding=false;refresh();updateState();if(n==1)applySelection();}).show();
     }).show();}
     String versionName(){try{return getPackageManager().getPackageInfo(getPackageName(),0).versionName;}catch(Exception e){return "";}}
 
     JSONObject cloneJson(JSONObject o){try{return new JSONObject(o.toString());}catch(Exception e){throw new IllegalStateException(e);}}
     String signature(String b,JSONObject o){TreeMap<String,String> m=new TreeMap<>();Iterator<String> keys=o.keys();while(keys.hasNext()){String k=keys.next();m.put(k,o.optString(k));}return b+m.toString();}
-    void persistDraft(){prefs.edit().putString("draftBase",base).putString("draftOverrides",overrides.toString()).apply();}
-    void updateState(){if(appCount!=null&&repo!=null)appCount.setText(filtered.size()+" 个应用");boolean dirty=!signature(base,overrides).equals(signature(appliedBase,appliedOverrides));status.setText((dirty?"有未应用的修改":"选择已保存")+" · "+overrides.length()+" 个应用单独指定");apply.setEnabled(!busy);apply.setText(dirty?"应用选择":"重新应用");}
-    void filter(){filtered.clear();for(IconRepository.App a:repo.apps)if((a.label+" "+a.pkg).toLowerCase(Locale.ROOT).contains(query))filtered.add(a);adapter.notifyDataSetChanged();}
+    void persistDraft(){prefs.edit().putString("draftBase",base).putString("draftOverrides",overrides.toString()).putInt("draftScale",iconScale).apply();}
+    void updateState(){if(appCount!=null&&repo!=null)appCount.setText(filtered.size()+" 个应用");if(scaleDetail!=null)scaleDetail.setText(iconScale+"%");boolean dirty=iconScale!=appliedScale||!signature(base,overrides).equals(signature(appliedBase,appliedOverrides));status.setText((dirty?"有未应用的修改":"选择已保存")+" · "+overrides.length()+" 个应用单独指定 · "+iconScale+"%");apply.setEnabled(!busy);apply.setText(dirty?"应用选择":"重新应用");}
+    void refresh(){if(repo!=null)filter();}
+    /** Smartisan groups apps by whether the icon set covers them; here that is the default pack. */
+    void filter(){filtered.clear();rows.clear();for(IconRepository.App a:repo.apps)if((a.label+" "+a.pkg).toLowerCase(Locale.ROOT).contains(query))filtered.add(a);
+        List<IconRepository.App> covered=new ArrayList<>(),missing=new ArrayList<>();for(IconRepository.App a:filtered)("native".equals(repo.defaultChoice(a.pkg,base))?missing:covered).add(a);
+        if("original".equals(base)){if(!filtered.isEmpty()){rows.add("应用图标 · "+filtered.size());rows.addAll(filtered);}}
+        else{String name="「"+repo.label(base)+"」";if(!covered.isEmpty()){rows.add(name+"已收录 · "+covered.size());rows.addAll(covered);}if(!missing.isEmpty()){rows.add(name+"未收录 · "+missing.size());rows.addAll(missing);}}
+        if(!filtered.isEmpty())rows.add(FOOTER);else rows.add("没有找到应用");adapter.notifyDataSetChanged();}
     String effective(IconRepository.App a){return overrides.optString(a.pkg,repo.defaultChoice(a.pkg,base));}
-    void select(IconRepository.App a,String choice){if(busy)return;try{overrides.put(a.pkg,choice);}catch(Exception e){throw new IllegalStateException(e);}persistDraft();adapter.notifyDataSetChanged();updateState();}
+    void select(IconRepository.App a,String choice){if(busy)return;if(choice.equals(repo.defaultChoice(a.pkg,base)))overrides.remove(a.pkg);else try{overrides.put(a.pkg,choice);}catch(Exception e){throw new IllegalStateException(e);}persistDraft();refresh();updateState();if(selectionListener!=null)selectionListener.run();}
+    /** The icon in a row's right-hand tile: the chosen one, else the default pack's, else any pack's; null when nothing covers the app. */
+    String alternative(IconRepository.App a){String eff=effective(a);if(!"native".equals(eff))return eff;String d=repo.defaultChoice(a.pkg,base);if(!"native".equals(d))return d;for(String p:repo.packs){List<String> v=repo.variants(a.pkg,p);if(!v.isEmpty())return v.get(0);}return null;}
+    String statusFor(IconRepository.App a){String eff=effective(a);if("native".equals(eff))return alternative(a)==null?"可替换图标":"使用原生图标";return choiceLabel(eff)+(overrides.has(a.pkg)?" · 已替换图标":" · 跟随默认图标包");}
     String choiceLabel(String c){if("native".equals(c))return "原生";IconRepository.Icon i=repo.icons.get(c);return i==null?"未知":repo.label(i.pack);}
-    void load(ImageView view,String choice,IconRepository.App app){
-        String key=choice+("native".equals(choice)?":"+app.pkg:"");view.setTag(key);Bitmap b=cache.get(key);if(b!=null){view.setImageBitmap(b);return;}view.setImageDrawable(null);
-        images.execute(()->{try{Bitmap bitmap=repo.bitmap(choice,app);cache.put(key,bitmap);runOnUiThread(()->{if(key.equals(view.getTag()))view.setImageBitmap(bitmap);});}catch(Exception e){android.util.Log.w("ZuiIconHelper","preview "+key,e);runOnUiThread(()->{if(key.equals(view.getTag()))view.setContentDescription("预览加载失败");});}});
+    void load(ImageView view,String choice,IconRepository.App app){load(view,choice,app,true);}
+    void load(ImageView view,String choice,IconRepository.App app,boolean scaled){
+        final int previewScale=scaled?iconScale:100;String key=choice+("native".equals(choice)?":"+app.pkg:"")+":"+previewScale;view.setTag(key);Bitmap b=cache.get(key);if(b!=null){view.setImageBitmap(b);return;}view.setImageDrawable(null);
+        images.execute(()->{try{Bitmap source=repo.bitmap(choice,app);Bitmap bitmap=IconScale.bitmap(source,previewScale);if(bitmap!=source)source.recycle();cache.put(key,bitmap);runOnUiThread(()->{if(key.equals(view.getTag()))view.setImageBitmap(bitmap);});}catch(Exception e){android.util.Log.w("ZuiIconHelper","preview "+key,e);runOnUiThread(()->{if(key.equals(view.getTag()))view.setContentDescription("预览加载失败");});}});
     }
-    View tile(IconRepository.App a,String choice,String label,boolean selected,Runnable click){
-        FrameLayout cell=new FrameLayout(this);cell.setBackground(SmartisanStyle.tile(this,selected));cell.setContentDescription(a.label+" · "+label+(selected?" · 已选":""));cell.setOnClickListener(v->click.run());
-        LinearLayout inner=column();inner.setGravity(Gravity.CENTER_HORIZONTAL);inner.setPadding(dp(4),dp(9),dp(4),dp(6));ImageView icon=new ImageView(this);icon.setScaleType(ImageView.ScaleType.FIT_CENTER);inner.addView(icon,new LinearLayout.LayoutParams(dp(48),dp(48)));load(icon,choice,a);
-        TextView name=text(label,11,selected?GREEN:MUTED);if(selected)name.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setGravity(Gravity.CENTER);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(7);inner.addView(name,np);cell.addView(inner,new FrameLayout.LayoutParams(-1,-1));
-        if(selected){ImageView mark=SmartisanStyle.icon(this,"selected",16);FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.TOP|Gravity.END);mp.topMargin=dp(5);mp.rightMargin=dp(5);cell.addView(mark,mp);}
-        LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(dp(80),dp(90));cp.rightMargin=dp(4);cell.setLayoutParams(cp);return cell;
+    /** A Smartisan icon tile: white square with the icon, the red check when chosen and an optional caption. A null choice is the grey "+" tile. The check is the cell's tag. */
+    View iconCell(IconRepository.App a,String choice,String caption,boolean chosen,int size,Runnable click){
+        LinearLayout cell=column();cell.setGravity(Gravity.CENTER_HORIZONTAL);int over=dp(7),badge=dp(22);FrameLayout holder=new FrameLayout(this);
+        FrameLayout tile=new FrameLayout(this);tile.setBackground(SmartisanStyle.iconTile(this,choice==null));tile.setOnClickListener(v->click.run());tile.setContentDescription(a.label+" · "+(choice==null?"选择替换图标":caption==null?choiceLabel(choice):caption)+(chosen?" · 已选":""));
+        ImageView icon=new ImageView(this);icon.setScaleType(ImageView.ScaleType.FIT_CENTER);int inner=choice==null?size*45/100:size*76/100;tile.addView(icon,new FrameLayout.LayoutParams(inner,inner,Gravity.CENTER));
+        if(choice==null)icon.setImageResource(getResources().getIdentifier("sm_plus","drawable",getPackageName()));else load(icon,choice,a);
+        FrameLayout.LayoutParams tp=new FrameLayout.LayoutParams(size,size);tp.setMargins(over,over,over,over/2);holder.addView(tile,tp);
+        ImageView mark=SmartisanStyle.icon(this,"badge",22);holder.addView(mark,new FrameLayout.LayoutParams(badge,badge,Gravity.TOP|Gravity.END));mark.setVisibility(chosen?View.VISIBLE:View.INVISIBLE);cell.addView(holder,new LinearLayout.LayoutParams(-2,-2));cell.setTag(mark);
+        if(caption!=null){TextView t=text(caption,11,MUTED);t.setSingleLine(true);t.setEllipsize(TextUtils.TruncateAt.END);t.setGravity(Gravity.CENTER);t.setPadding(dp(2),dp(4),dp(2),dp(10));cell.addView(t,new LinearLayout.LayoutParams(size+over*2,-2));}
+        return cell;
     }
     class AppAdapter extends BaseAdapter {
-        public int getCount(){return filtered.size();}public Object getItem(int n){return filtered.get(n);}public long getItemId(int n){return n;}
+        public int getCount(){return rows.size();}public Object getItem(int n){return rows.get(n);}public long getItemId(int n){return n;}
+        public int getViewTypeCount(){return 3;}public int getItemViewType(int n){Object o=rows.get(n);return o instanceof IconRepository.App?0:o==FOOTER?2:1;}
+        public boolean isEnabled(int n){return false;}
         public View getView(int n,View old,android.view.ViewGroup parent){
-            IconRepository.App a=filtered.get(n);String selected=effective(a);boolean own=overrides.has(a.pkg);LinearLayout row=column();row.setPadding(dp(10),dp(12),dp(8),dp(10));
-            LinearLayout heading=new LinearLayout(MainActivity.this);heading.setGravity(Gravity.CENTER_VERTICAL);heading.setPadding(dp(6),0,0,0);LinearLayout names=column();TextView name=text(a.label,15,INK);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);names.addView(name);
-            TextView source=text((own?"单独选择 · ":"跟随默认 · ")+choiceLabel(selected),12,own?GREEN:MUTED);source.setPadding(0,dp(5),0,0);source.setSingleLine(true);source.setEllipsize(TextUtils.TruncateAt.END);names.addView(source);heading.addView(names,new LinearLayout.LayoutParams(0,-2,1));
-            if(own)heading.addView(textButton("跟随默认","让"+a.label+"跟随默认包",()->{if(busy)return;overrides.remove(a.pkg);persistDraft();notifyDataSetChanged();updateState();}),new LinearLayout.LayoutParams(-2,dp(36)));
-            heading.addView(detailButton("更多图标","为"+a.label+"选择更多图标或导入图片",()->{if(!busy)library(a);}),new LinearLayout.LayoutParams(-2,dp(36)));row.addView(heading);
-            HorizontalScrollView scroll=new HorizontalScrollView(MainActivity.this);scroll.setHorizontalScrollBarEnabled(false);scroll.setOverScrollMode(View.OVER_SCROLL_NEVER);LinearLayout options=new LinearLayout(MainActivity.this);options.setPadding(0,dp(8),dp(4),0);
-            options.addView(tile(a,"native","原生",selected.equals("native"),()->select(a,"native")));Set<String> added=new HashSet<>();added.add("native");
-            for(String pack:repo.packs){List<String> choices=repo.variants(a.pkg,pack);for(int i=0;i<choices.size();i++){String c=choices.get(i);if(added.add(c))options.addView(tile(a,c,repo.label(pack)+(choices.size()>1?" "+(i+1):""),selected.equals(c),()->select(a,c)));}}
-            if(!added.contains(selected))options.addView(tile(a,selected,choiceLabel(selected),true,()->select(a,selected)));
-            scroll.addView(options);row.addView(scroll);return row;
+            Object item=rows.get(n);
+            if(item==FOOTER){TextView t=text("默认图标包没有收录的应用，可以点「+」或点进那一行，从其他图标包里挑一个，也可以用自己的图片。",12,MUTED);t.setLineSpacing(dp(3),1);t.setPadding(dp(16),dp(10),dp(16),dp(8));return t;}
+            if(item instanceof String){TextView t=SmartisanStyle.caption(MainActivity.this,(String)item);t.setPadding(dp(16),dp(22),0,dp(8));return t;}
+            IconRepository.App a=(IconRepository.App)item;boolean first=!(rows.get(n-1) instanceof IconRepository.App),last=n==rows.size()-1||!(rows.get(n+1) instanceof IconRepository.App);
+            String eff=effective(a),alt=alternative(a);boolean nat="native".equals(eff);
+            LinearLayout row=new LinearLayout(MainActivity.this);row.setGravity(Gravity.CENTER_VERTICAL);row.setBaselineAligned(false);row.setBackground(SmartisanStyle.segment(MainActivity.this,first,last));row.setPadding(dp(14),dp(8),dp(12),dp(8));
+            row.addView(iconCell(a,"native",null,nat,dp(58),()->select(a,"native")));
+            row.addView(iconCell(a,alt,null,!nat,dp(58),alt==null?()->detail(a):()->select(a,alt)));
+            LinearLayout names=column();TextView name=text(a.label,16,INK);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);names.addView(name);
+            TextView status=text(statusFor(a),13,MUTED);status.setPadding(0,dp(7),0,0);status.setSingleLine(true);status.setEllipsize(TextUtils.TruncateAt.END);names.addView(status);
+            LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(0,-2,1);np.leftMargin=dp(14);row.addView(names,np);row.addView(SmartisanStyle.icon(MainActivity.this,"right",22));
+            row.setContentDescription(a.label+" · "+statusFor(a)+" · 打开详情");row.setOnClickListener(v->detail(a));
+            AbsListView.LayoutParams lp=new AbsListView.LayoutParams(-1,-2);row.setLayoutParams(lp);return row;
         }
     }
-    void library(IconRepository.App app){
-        LinearLayout body=column();body.setPadding(dp(16),dp(14),dp(16),dp(8));
-        Button importButton=button("＋  从相册或文件导入图片");importButton.setContentDescription("为"+app.label+"导入自定义图片");body.addView(importButton,new LinearLayout.LayoutParams(-1,dp(46)));
-        final List<String> packs=new ArrayList<>();packs.add("all");packs.addAll(repo.packs);packs.add("custom");final int[] pack={0};String[] packLabels=new String[packs.size()];for(int i=0;i<packs.size();i++)packLabels[i]=i==0?"全部":repo.label(packs.get(i));List<IconRepository.Icon> found=new ArrayList<>();Runnable[] refresh=new Runnable[1];
-        LinearLayout segments=SmartisanStyle.segmented(this,packLabels,0,n->{pack[0]=n;refresh[0].run();});LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(38));sp.topMargin=dp(14);body.addView(segments,sp);
-        EditText find=new EditText(this);find.setSingleLine(true);find.setHint("搜索图标名称、英文名或包名");LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,dp(38));fp.topMargin=dp(12);body.addView(searchField(find),fp);
-        TextView count=text("",12,MUTED);count.setPadding(dp(4),dp(12),0,dp(8));body.addView(count);
-        GridView grid=new GridView(this);grid.setNumColumns(GridView.AUTO_FIT);grid.setColumnWidth(dp(88));grid.setVerticalSpacing(dp(4));grid.setHorizontalSpacing(dp(4));grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);grid.setSelector(android.R.color.transparent);grid.setVerticalScrollBarEnabled(false);body.addView(grid,new LinearLayout.LayoutParams(-1,Math.min(dp(400),getResources().getDisplayMetrics().heightPixels*42/100)));
-        PanelDialog dialog=new PanelDialog.Builder(this).setTitle("为「"+app.label+"」挑选图标").setView(body).setNegativeButton("取消",null).create();
-        BaseAdapter libraryAdapter=new BaseAdapter(){public int getCount(){return found.size();}public Object getItem(int n){return found.get(n);}public long getItemId(int n){return n;}
-            public View getView(int n,View old,android.view.ViewGroup parent){IconRepository.Icon ic=found.get(n);boolean chosen=ic.choice.equals(effective(app));FrameLayout cell=new FrameLayout(MainActivity.this);cell.setBackground(SmartisanStyle.tile(MainActivity.this,chosen));
-                LinearLayout inner=column();inner.setGravity(Gravity.CENTER_HORIZONTAL);inner.setPadding(dp(4),dp(9),dp(4),dp(4));ImageView image=new ImageView(MainActivity.this);inner.addView(image,new LinearLayout.LayoutParams(dp(50),dp(50)));load(image,ic.choice,app);
-                TextView name=text(ic.name,11,chosen?GREEN:INK);name.setSingleLine(true);name.setEllipsize(TextUtils.TruncateAt.END);name.setGravity(Gravity.CENTER);LinearLayout.LayoutParams np=new LinearLayout.LayoutParams(-1,-2);np.topMargin=dp(6);inner.addView(name,np);TextView source=text(repo.label(ic.pack),10,MUTED);source.setGravity(Gravity.CENTER);source.setPadding(0,dp(3),0,0);inner.addView(source,new LinearLayout.LayoutParams(-1,-2));cell.addView(inner);
-                if(chosen){ImageView mark=SmartisanStyle.icon(MainActivity.this,"selected",16);FrameLayout.LayoutParams mp=new FrameLayout.LayoutParams(dp(16),dp(16),Gravity.TOP|Gravity.END);mp.topMargin=dp(5);mp.rightMargin=dp(5);cell.addView(mark,mp);}
-                cell.setContentDescription(ic.name+" · "+repo.label(ic.pack)+(chosen?" · 已选":""));cell.setOnClickListener(v->{select(app,ic.choice);dialog.dismiss();});cell.setLayoutParams(new android.widget.AbsListView.LayoutParams(-1,dp(106)));return cell;}};
-        importButton.setOnClickListener(v->{dialog.dismiss();pickImage(app);});grid.setAdapter(libraryAdapter);
-        refresh[0]=()->{String q=find.getText().toString().trim().toLowerCase(Locale.ROOT);found.clear();for(IconRepository.Icon ic:repo.icons.values())if((pack[0]==0||packs.get(pack[0]).equals(ic.pack))&&ic.search.contains(q))found.add(ic);count.setText(found.isEmpty()&&"custom".equals(packs.get(pack[0]))?"还没有导入过图片，点上面的按钮导入。":found.size()+" 个图标 · 点选后回到应用列表");libraryAdapter.notifyDataSetChanged();grid.setSelection(0);};
-        find.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){refresh[0].run();}public void afterTextChanged(Editable e){}});
-        refresh[0].run();dialog.show();dialog.getWindow().setLayout(Math.min(getResources().getDisplayMetrics().widthPixels-dp(32),dp(720)),-2);new Handler().postDelayed(()->captureWindow(dialog.getWindow(),"dialog-preview.png"),1500);
+    /** Smartisan's 「替换图标」 page: the app on top, then every icon it can use, in grouped grids. */
+    void detail(IconRepository.App app){
+        if(busy)return;Dialog page=new Dialog(this,android.R.style.Theme_Material_Light_NoActionBar);Window w=page.getWindow();w.setStatusBarColor(Color.WHITE);w.setNavigationBarColor(Color.WHITE);w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);w.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE|WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN);
+        LinearLayout frame=column();frame.setBackgroundColor(BG);
+        FrameLayout bar=new FrameLayout(this);bar.setBackgroundColor(Color.WHITE);TextView title=text("替换图标",17,SmartisanStyle.TITLE);title.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));title.setGravity(Gravity.CENTER);bar.addView(title,new FrameLayout.LayoutParams(-1,dp(48)));
+        FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(dp(48),dp(48),Gravity.LEFT|Gravity.CENTER_VERTICAL);bp.leftMargin=dp(6);bar.addView(barAction("back",20,"返回",page::dismiss),bp);frame.addView(bar);frame.addView(SmartisanStyle.divider(this,SmartisanStyle.BAR_LINE));
+        LinearLayout body=column();body.setPadding(dp(16),dp(16),dp(16),dp(28));ScrollView scroll=new ScrollView(this);scroll.setVerticalScrollBarEnabled(false);scroll.addView(new SmartisanStyle.Centered(this,body,-2));frame.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        List<Object[]> marks=new ArrayList<>(),found=new ArrayList<>();
+        LinearLayout head=column();SmartisanStyle.card(head);head.setGravity(Gravity.CENTER_HORIZONTAL);head.setPadding(dp(20),dp(26),dp(20),dp(22));
+        ImageView big=new ImageView(this);big.setScaleType(ImageView.ScaleType.FIT_CENTER);head.addView(big,new LinearLayout.LayoutParams(dp(60),dp(60)));load(big,"native",app,false);
+        TextView name=text(app.label,18,INK);name.setGravity(Gravity.CENTER);name.setPadding(0,dp(14),0,0);head.addView(name);TextView version=text(versionOf(app.pkg),13,MUTED);version.setGravity(Gravity.CENTER);version.setPadding(0,dp(9),0,0);head.addView(version);
+        TextView state=text(statusFor(app),13,MUTED);state.setGravity(Gravity.CENTER);state.setPadding(0,dp(9),0,0);head.addView(state);body.addView(head,new LinearLayout.LayoutParams(-1,-2));
+        Runnable repaint=()->{String eff=effective(app);for(List<Object[]> l:Arrays.asList(marks,found))for(Object[] m:l)((View)m[1]).setVisibility(eff.equals(m[0])?View.VISIBLE:View.INVISIBLE);state.setText(statusFor(app));};
+        java.util.function.BiFunction<String,String,View> cell=(choice,caption)->{View v=iconCell(app,choice,caption,choice.equals(effective(app)),dp(64),()->{select(app,choice);});return v;};
+        SmartisanStyle.Grid own=new SmartisanStyle.Grid(this,104);View nativeCell=cell.apply("native","原生");marks.add(new Object[]{"native",nativeCell.getTag()});own.addView(nativeCell);
+        for(String pack:repo.packs){List<String> v=repo.variants(app.pkg,pack);for(int i=0;i<v.size();i++){String c=v.get(i);View x=cell.apply(c,repo.label(pack)+(v.size()>1?" "+(i+1):""));marks.add(new Object[]{c,x.getTag()});own.addView(x);}}
+        String eff=effective(app);boolean listed=false;for(Object[] m:marks)if(eff.equals(m[0]))listed=true;if(!listed&&!eff.startsWith("custom/")){View x=cell.apply(eff,choiceLabel(eff));marks.add(new Object[]{eff,x.getTag()});own.addView(x);}
+        body.addView(group("本应用的图标",own),groupParams());
+        SmartisanStyle.Grid mine=new SmartisanStyle.Grid(this,104);for(IconRepository.Icon ic:new ArrayList<>(repo.icons.values()))if("custom".equals(ic.pack)){View x=cell.apply(ic.choice,ic.name);marks.add(new Object[]{ic.choice,x.getTag()});mine.addView(x);}
+        mine.addView(iconCell(app,null,"导入图片",false,dp(64),()->{page.dismiss();pickImage(app);}));body.addView(group("我的图片",mine),groupParams());
+        LinearLayout searchBox=column();EditText find=new EditText(this);find.setSingleLine(true);find.setHint("搜索全部图标包，例如 camera、相机");LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,dp(38));fp.setMargins(dp(16),0,dp(16),0);searchBox.addView(searchField(find),fp);
+        TextView count=text("",12,MUTED);count.setGravity(Gravity.CENTER);count.setPadding(dp(16),dp(12),dp(16),dp(4));searchBox.addView(count);SmartisanStyle.Grid results=new SmartisanStyle.Grid(this,104);searchBox.addView(results);
+        TextView more=textButton("显示更多","显示更多搜索结果",()->{});LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(-2,dp(36));mp.gravity=Gravity.CENTER_HORIZONTAL;mp.bottomMargin=dp(6);searchBox.addView(more,mp);body.addView(group("在全部图标包中搜索",searchBox),groupParams());
+        int[] limit={60};Runnable search=()->{String q=find.getText().toString().trim().toLowerCase(Locale.ROOT);results.removeAllViews();found.clear();int total=0;
+            if(!q.isEmpty())for(IconRepository.Icon ic:new ArrayList<>(repo.icons.values())){if("custom".equals(ic.pack)||!ic.search.contains(q))continue;if(++total>limit[0])continue;View x=cell.apply(ic.choice,ic.name.matches("(?i)(icon|ic)?[ _]?[0-9a-f]{6,}")?repo.label(ic.pack):ic.name);found.add(new Object[]{ic.choice,x.getTag()});results.addView(x);}
+            count.setText(q.isEmpty()?"按名称搜索，可以用中文、英文或包名":total==0?"没有找到图标":total>limit[0]?"找到 "+total+" 个，先显示前 "+limit[0]+" 个":"找到 "+total+" 个图标");more.setVisibility(total>limit[0]?View.VISIBLE:View.GONE);};
+        more.setOnClickListener(v->{limit[0]+=60;search.run();});
+        find.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int a,int c,int f){}public void onTextChanged(CharSequence s,int a,int b,int c){limit[0]=60;search.run();}public void afterTextChanged(Editable e){}});search.run();
+        selectionListener=repaint;page.setOnDismissListener(d->{selectionListener=null;refresh();updateState();});page.setContentView(frame);page.show();
     }
+    Runnable selectionListener;
+    LinearLayout group(String title,View content){LinearLayout g=column();SmartisanStyle.card(g);TextView t=text(title,16,INK);t.setGravity(Gravity.CENTER);t.setPadding(0,dp(20),0,dp(10));g.addView(t,new LinearLayout.LayoutParams(-1,-2));g.addView(content,new LinearLayout.LayoutParams(-1,-2));g.setPadding(0,0,0,dp(8));return g;}
+    LinearLayout.LayoutParams groupParams(){LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.topMargin=dp(14);return p;}
+    String versionOf(String pkg){try{String v=getPackageManager().getPackageInfo(pkg,0).versionName;return v==null?pkg:v;}catch(Exception e){return pkg;}}
 
     void applySelection(){
-        if(busy||!CHANGING.compareAndSet(false,true))return;busy=true;apply.setEnabled(false);status.setText("正在准备所选图标，请稍等…");final String selectedBase=base;final JSONObject chosen=cloneJson(overrides);
+        if(busy||!CHANGING.compareAndSet(false,true))return;busy=true;apply.setEnabled(false);status.setText("正在准备所选图标，请稍等…");final String selectedBase=base;final int selectedScale=iconScale;final JSONObject chosen=cloneJson(overrides);
         new Thread(()->{String error=null;try{
-            File candidate=engine.compose(selectedBase,chosen,repo);runOnUiThread(()->status.setText("正在应用并核对桌面图标…"));
+            File candidate=engine.compose(selectedBase,chosen,repo,selectedScale);runOnUiThread(()->status.setText("正在应用并核对桌面图标…"));
             engine.apply(candidate,engine.configuration(chosen),selectedBase+" "+chosen.toString());
-            String hash=engine.liveHash();prefs.edit().putString("appliedBase",selectedBase).putString("appliedOverrides",chosen.toString()).putString("appliedHash",hash).commit();
+            String hash=engine.liveHash();prefs.edit().putString("appliedBase",selectedBase).putString("appliedOverrides",chosen.toString()).putString("appliedHash",hash).putInt("appliedScale",selectedScale).commit();
             verifySelections();
         }catch(Exception e){error=e.getMessage();android.util.Log.e("ZuiIconHelper","apply",e);}finally{engine.saveReport();CHANGING.set(false);}
-        final String failure=error;runOnUiThread(()->{busy=false;if(failure==null){appliedBase=selectedBase;appliedOverrides=chosen;updateState();status.setText("已应用并校验 · "+repo.label(base)+" 默认 · "+chosen.length()+" 个应用单独指定");}else{updateState();status.setText("未完成："+failure);}new Handler().postDelayed(()->savePreview(),1500);});
+        final String failure=error;runOnUiThread(()->{busy=false;if(failure==null){appliedBase=selectedBase;appliedScale=selectedScale;appliedOverrides=chosen;updateState();status.setText("已应用并校验 · "+repo.label(base)+" 默认 · "+chosen.length()+" 个应用单独指定");}else{updateState();status.setText("未完成："+failure);}new Handler().postDelayed(()->savePreview(),1500);});
         },"apply-icons").start();
     }
     void verifySelections() throws Exception {
@@ -237,8 +273,25 @@ public class MainActivity extends Activity {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             Bitmap output=crop.export();busy=true;apply.setEnabled(false);status.setText("正在保存自定义图标…");dialog.dismiss();
             new Thread(()->{String choice=null,error=null;try{choice=repo.custom.save(output,app.label);}catch(Exception e){error=e.getMessage();}finally{output.recycle();}
-                final String saved=choice,failure=error;runOnUiThread(()->{busy=false;if(saved!=null){try{repo.reloadCustom();select(app,saved);clearImport();status.setText("图片已选中，点击「应用选择」后生效。");}catch(Exception e){status.setText("图片已保存，请重新打开助手选择。");}}else{updateState();status.setText("保存失败："+failure);}});
+                final String saved=choice,failure=error;runOnUiThread(()->{busy=false;if(saved!=null){try{repo.reloadCustom();select(app,saved);clearImport();status.setText("图片已选中，点击「应用选择」后生效。");detail(app);}catch(Exception e){status.setText("图片已保存，请重新打开助手选择。");}}else{updateState();status.setText("保存失败："+failure);}});
             },"save-icon").start();
         });
+    }
+
+    void chooseScale(){
+        if(busy)return;final int[] chosen={iconScale};LinearLayout body=column();body.setPadding(dp(20),dp(18),dp(20),dp(16));
+        // Live preview: a few of the user's own icons inside launcher-like cells.
+        LinearLayout cells=new LinearLayout(this);cells.setGravity(Gravity.CENTER);List<ImageView> views=new ArrayList<>();List<Bitmap> sources=new ArrayList<>();
+        for(int i=0;i<5;i++){FrameLayout cell=new FrameLayout(this);android.graphics.drawable.GradientDrawable frame=SmartisanStyle.surface(this,Color.TRANSPARENT,10,0);frame.setStroke(Math.max(1,dp(1)),0xffcfd8ee,dp(4),dp(3));cell.setBackground(frame);ImageView v=new ImageView(this);v.setScaleType(ImageView.ScaleType.FIT_CENTER);cell.addView(v,new FrameLayout.LayoutParams(dp(58),dp(58),Gravity.CENTER));views.add(v);LinearLayout.LayoutParams cp=new LinearLayout.LayoutParams(dp(66),dp(66));cp.setMargins(dp(5),0,dp(5),0);cells.addView(cell,cp);}
+        body.addView(cells,new LinearLayout.LayoutParams(-1,-2));
+        TextView value=text(chosen[0]+"%",22,INK);value.setTypeface(Typeface.create("sans-serif",Typeface.BOLD));value.setGravity(Gravity.CENTER);value.setPadding(0,dp(16),0,dp(4));body.addView(value,new LinearLayout.LayoutParams(-1,-2));
+        Runnable paint=()->{value.setText(chosen[0]+"%");for(int i=0;i<views.size()&&i<sources.size();i++)views.get(i).setImageBitmap(IconScale.bitmap(sources.get(i),chosen[0]));};
+        SmartisanSeekBar slider=new SmartisanSeekBar(this);slider.setMax((IconScale.MAX-IconScale.MIN)/5);slider.setProgress((chosen[0]-IconScale.MIN)/5);slider.setContentDescription("图标大小");
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar bar,int progress,boolean user){chosen[0]=IconScale.MIN+progress*5;paint.run();}public void onStartTrackingTouch(SeekBar bar){}public void onStopTrackingTouch(SeekBar bar){}});
+        LinearLayout sliderRow=new LinearLayout(this);sliderRow.setGravity(Gravity.CENTER_VERTICAL);sliderRow.setBaselineAligned(false);sliderRow.addView(text(IconScale.MIN+"%",12,MUTED));sliderRow.addView(slider,new LinearLayout.LayoutParams(0,dp(44),1));sliderRow.addView(text(IconScale.MAX+"%",12,MUTED));body.addView(sliderRow,new LinearLayout.LayoutParams(-1,-2));
+        TextView reset=textButton("恢复 100%","把图标大小恢复为 100%",()->slider.setProgress((100-IconScale.MIN)/5));LinearLayout.LayoutParams rp=new LinearLayout.LayoutParams(-2,dp(34));rp.gravity=Gravity.CENTER_HORIZONTAL;body.addView(reset,rp);
+        TextView hint=text("只改变替换后图标的画面大小，桌面格子和文字不变。放大时超出边框的部分会被裁掉。",12,MUTED);hint.setGravity(Gravity.CENTER);hint.setLineSpacing(dp(3),1);hint.setPadding(0,dp(10),0,0);body.addView(hint,new LinearLayout.LayoutParams(-1,-2));
+        new PanelDialog.Builder(this).setTitle("图标大小").setView(body).setNegativeButton("取消",null).setPositiveButton("确定",(d,w)->{iconScale=chosen[0];persistDraft();refresh();updateState();if(iconScale!=appliedScale)status.setText("图标大小改为 "+iconScale+"% · 点「应用选择」后生效");}).show();
+        new Thread(()->{List<Bitmap> loaded=new ArrayList<>();for(IconRepository.App a:repo.apps){if(loaded.size()>=5)break;try{loaded.add(repo.bitmap(effective(a),a));}catch(Exception ignored){}}runOnUiThread(()->{sources.addAll(loaded);paint.run();});},"scale-preview").start();
     }
 }
