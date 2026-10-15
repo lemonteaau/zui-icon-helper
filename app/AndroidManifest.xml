@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.github.lemonteaau.zuiiconhelper" android:versionCode="60" android:versionName="6.0">
+<uses-sdk android:minSdkVersion="28" android:targetSdkVersion="28"/>
+<uses-permission android:name="zui.permission.READ_THEMES"/><uses-permission android:name="zui.permission.WRITE_THEMES"/><uses-permission android:name="zui.permission.ACCESS_THEME_MANAGER"/>
+<uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+<application android:label="ZUI 图标助手" android:icon="@drawable/ic_launcher" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:largeHeap="true" android:allowBackup="false"><activity android:name=".MainActivity" android:configChanges="orientation|screenSize" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity></application></manifest>
